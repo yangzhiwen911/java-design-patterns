@@ -1,0 +1,385 @@
+#  [美居内容版块升级]()`V1`说明文档
+
+
+
+> [修订记录]()
+
+|  [日期]()  | [修订版本]() | [修改章节]() |  [修改描述]()  | [作者]() |
+| :--------: | :----------: | :----------: | :------------: | :------: |
+| 2020-10-12 |   `v1.0.0`   |   所有章节   |  业务说明初稿  | `杨志文` |
+| 2020-10-13 |   `v1.0.1`   |  补充、修正  | 业务说明修订稿 | `欧春晓` |
+|            |              |              |                |          |
+|            |              |              |                |          |
+
+
+
+# 1. 说明文档
+
+## 1.1 需求背景
+
+> ​        介于[详情页转化率]()较低、精选页首页`PV/UV`没有任何质变，搜索内容分词缺乏定制化、词项匹配不准确等所导致的一系列用户体验问题。
+
+
+![image-20201019194517348](E:\工作日报\工作总结\resources\IOT\image-20201019194517348.png)
+
+## 1.2 需求方案
+
+> ​         鉴此，需要改善并优化[美居精选]()和[达人动态]()，通过`IOT`云平台建立优化交互数据的传输方式 ，数据中台对[搜索词]()进行更多维度的拆分，推荐给用户更多的词项数据匹配，使搜索内容呈现效果相对丰富，搜索出来的页面入口维度更宽泛，达到提升内容版块用户体验的作用，进而提升相关页面的`PV/UV`来满足各自业务需求。
+
+## 1.3 内容概述
+
+> ​        本文接口文档描述了第三方系统[美居精选]()和[达人动态]()的数据同步流程，主要针对接口的规则定义、加密签名、幂等性、数据脱敏等维度的说明设计，所有接口统一如下：
+>
+> - **只暴露接口，分离业务。**
+> - **所有定义好的返回参数，字段必须齐全**
+> - **`REST`风格**
+> - **`UTF-8`编码**
+> - **数据返回采用`JSON`格式**
+> - **无论值是字符串还是整数，统一都要加双引号`""`**
+
+# 2. 术语表
+
+| [术语]()      | [全称]()                   |                           [说明]()                           |
+| ------------- | -------------------------- | :----------------------------------------------------------: |
+| `AccessToken` | 接入令牌                   | 接入令牌包含了第三方应用接入物联网平台的安全信息，控制第三方应用可以访问物联网平台的哪些对象资源。 |
+| `IoT` 云平台  | 物联网平台                 |                                                              |
+| DCP           | `Data Collection Platform` | `DCP`数据中控平台，作为营销系统的重要组成部分，主要包含`DCP、CMDM、SMS、EDI`四个子系统。 |
+| CMS           | 达人版块                   |                                                              |
+|               |                            |                                                              |
+
+# 3. 美居搜索系统架构
+
+## 3.1.1 数据关系图
+
+> [美居精选（`DCP`）、达人板块（`CMS`）、云平台`IOT`接口数据关系图]()
+
+![image-20201010130232940](E:\工作日报\工作总结\resources\IOT\image-20201010125519974.png)
+
+- 安全：接口的设计考虑安全性，使用无状态的领域模型交互、数据脱敏、鉴权、地址签名等
+- 幂等：多次调用，保证数据的准确性和唯一性，传输使用全局唯一ID表示作为主key
+- 算法：内部接口通过领域模型建立映射关系，配合接口服务降级处理，并记录日志
+
+**注:**
+
+- 签名规则参考`DCP`接入指南： [传送门](https://health-apidoc-dev.smartmidea.net/project/52/interface/api/1778)
+
+- 美的美居整改需求原型说明：  [传送门](https://modao.cc/app/3a8d15e7d7cc63fc5ebd62ca8798158ed0ce201d?simulator_type=device&sticky#screen=skf80m9yv88fscr)
+
+- 美的美居整改需求`PDF`文档：  [传送门](http://gpm.midea.com/ALM/cb90426f-0cbc-470e-826d-0102b06d1ebb/ALMREQ/demandView)
+
+## 3.1.2 系统架构
+
+> [系统交互示意图]()
+
+![image-20201019194824378](E:\工作日报\工作总结\resources\IOT\image-20201019194824378.png)
+
+产品和需求：
+
+- 同步转异步场景一：
+  第三方数据变更后，`Notify`通知管理后台超时或者网络问题，造成通知失败的情况下的业务处理流程，如何处理消息丢失的问题？
+  - 强一致性： 第三方`Notify`通知管理后台指定时间内无响应，则通知失败，进行事务回滚；
+  - 无关联：第三方和管理后台解耦，互不影响，那么允许丢失，可以尝试重试机制；
+
+
+
+## 3.1.3 搜索原理
+
+> [搜索原理示意图]()
+
+![image-20201014105650435](E:\工作日报\工作总结\resources\IOT\image-20201010173619445.png)
+
+
+
+-  用户输入层
+
+​                按照业务需求的搜索划分，美居的查询分为两类：特定维度查询和关键字查询
+
+- 逻辑处理层
+  ​        由于关键字查询功能是对用户开放的，所以用户输入什么内容我们是不可控的。当用户提交了查询关键字后，系统会将关键字交给搜索逻辑处理，包括：
+
+  - [非法词过滤]()
+  - [错误词纠正]()
+  - [特定词跳转]()
+  - [自定义词典]()
+  - [停用词]()
+  - [同义词]()
+
+- 搜索服务层
+
+  ​     对搜索出来的内容进行分词、召回、排序等优化手段，提升搜索内容的准确度，以及内容优先级，促进用户转化率。
+
+## 3.1.4 典型业务接口时序图
+
+> [搜索业务接口时序图]()
+
+- 业务端
+
+![image-20201014133904503](E:\工作日报\工作总结\resources\IOT\image-20201014133904503.png)
+
+
+
+
+- 移动端
+
+![image-20201014141402229](E:\工作日报\工作总结\resources\IOT\image-20201011183636322.png)
+
+
+
+
+
+# 4. 美居搜索服务能力
+
+## 4.1 第三方搜索内容接入
+
+### 4.1.1  鉴权说明
+
+> 第三方应用首次访问物联网平台的开放`API`时，需调用此接口完成接入认证；第三方应用在物联网平台的认证过期后，需调用此接口重新进行认证，才能继续访问物联网平台的开放`API`。
+
+> 接口原型
+
+| [请求方法]() | POST                                          |
+| ------------ | --------------------------------------------- |
+| [请求地址]() | https://server:port/iocm/app/sec/v1.1.0/login |
+| [传输协议]() | HTTPS                                         |
+
+> 请求参数
+
+| [参数]() | [必选/可选]() | [类型]()    | [位置]() | [描述]()                                   |
+| -------- | ------------- | ----------- | -------- | ------------------------------------------ |
+| appId    | 必选          | String(256) | body     | 第三方应用的身份标识，用于唯一标识一个应用 |
+| secret   | 必选          | String(256) | body     | 第三方应用的密码，与appId对应              |
+
+> 响应参数
+
+| [参数]()     | [类型]()     | [描述]()                                                     |
+| ------------ | ------------ | ------------------------------------------------------------ |
+| scope        | String(256)  | 申请权限范围，即accessToken所能访问物联网平台资源的范围，参数值固定为default。 |
+| tokenType    | String(256)  | accessToken的类型，参数值固定为bearer。                      |
+| expiresIn    | Integer(256) | 平台生成并返回accessToken的有效时间，单位为秒。              |
+| accessToken  | String(256)  | 鉴权参数，访问物联网平台API接口的凭证。                      |
+| refreshToken | String(256)  | 鉴权参数，用来刷新accessToken，refreshToken的有效时间为1个月。 |
+
+
+> 注意事项：
+>
+> 鉴权接口是调用其他API的前提，除了调用鉴权接口（Auth），其他接口调用都需要在`request header`中携带参数`app_key`和`Authorization:Bearer`。`app_key`为参数中的`appId`，`Authorization`的值即为调用`Auth`接口获取到的`accessToken`。
+>
+> 如果多次获取`accessToken`，则之前的`accessToken`失效，后一次获取的`accessToken`才有效。请勿并发获取`accessToken`。
+
+### 4.2.3  第三方数据变更通知
+
+> **[业务场景]()**
+>
+> - 第三方系统数据发生变更，发布`Notify` 事件通知到管理后台，管理后台的事件接收器负责接收响应事件，并内部发送指定事件处理器。
+> - 事件处理器通过内部监听事件，对事件类型做校验包括`insert_rows`、`update_rows`、`delete_rows`三种事件类型的对应业务处理。
+> - 最后回调第三方系统进行数据拉取，并将数据最终发送到消息队列中等待消费。
+
+| [接口名]() | [通知接口定义]()                                    |
+| :--------: | --------------------------------------------------- |
+|  请求地址  | `http://{domain}/{contextpath}/search/event/notify` |
+|  请求方式  | `POST`                                              |
+|   `Tag`    | v1.0.0                                              |
+|  接口分类  | 公共                                                |
+|  是否回调  | 否                                                  |
+
+> 请求参数
+
+| [参数名]()    |     [参数类型]()     | [参数说明]()   | [必填]() | [备注]()               |
+| :------------ | :------------------: | :------------- | -------- | ---------------------- |
+| requestId     |       `String`       | 请求ID         | 必填     |                        |
+| requester     |       `String`       | 请求者         | 必填     | 第三方应用的身份标识   |
+| requestTS     |       `Number`       | 请求时间戳     | 必填     |                        |
+| notifyType    |       `String`       | 通知类型       | 必填     | contentDatasChanged    |
+| notifyPayload | `List<Notification>` | 通知内容       | 必填     |                        |
+| `├contentId`  |       `String`       | 内容业务唯一id |          |                        |
+| `├eventType`  |       `String`       | 事件类型       |          | 0:更新；1:插入；2:删除 |
+| `└eventTime`  |       `Number`       | 变更时间戳     | 必填     |                        |
+| notifyTime    |       `Number`       | 通知时间戳     | 必填     |                        |
+| extras        |       `object`       | 业务数据       | 非必填   | 第三方系统预留扩展     |
+| 。。。        |        。。。        | 。。。         | 。。。   | 。。。                 |
+
+> 输出参数
+
+|  [实体]()  | [属性参数]() | [属性类型]() | [输出说明]()                     |
+| :--------: | ------------ | ------------ | -------------------------------- |
+| `Response` | code         | `String`     | 返回码，0：请求成功；1：请求失败 |
+|            | msg          | `String`     | 返回码错误原因                   |
+|            | data         | `json`       | 返回结果`docs`                   |
+
+### 4.2.3   第三方数据拉取
+
+> [业务场景]()：
+>
+> - 事件通知成功之后，会根据事件类型来调用`DCP`、`CMS`第三方系统的回调接口，进而数据下发到消息队列（`Kafka`），最终`Kafka`异步消费信息，推送到`ElasticSearch`，完成数据闭环。
+
+|  [接口名]()  | [数据拉取接口]()                        |
+| :----------: | --------------------------------------- |
+| [请求地址]() | 订阅请求消息中的 [callbackurl]() 值决定 |
+| [请求方式]() | `POST`                                  |
+| [传输协议]() | `HTTPS`                                 |
+|   [Tag]()    | `v1.0.0`                                |
+| [接口分类]() | 公共                                    |
+| [是否签名]() | 是                                      |
+| [是否回调]() | 是                                      |
+
+## 4.3 美居业务搜索接口
+
+### 4.3.1 历史搜索
+
+> [功能概述]()
+>
+> - 搜索历史记录内容，移动端做缓存处理
+
+### 4.3.2 热门搜索
+
+
+> [功能概述]()
+>
+> - 根据用户搜索词条数量、热度、权重等维度排序，进行优先级展示
+
+|  [接口名]()  | 热门搜索查询接口                                    |
+| :----------: | --------------------------------------------------- |
+| [请求地址]() | `http://{domain}/{contextpath}/search/contentquery` |
+| [请求方式]() | `POST`                                              |
+|   [Tag]()    | v1.0.0                                              |
+| [接口分类]() | 公共                                                |
+| [是否分页]() | 否                                                  |
+
+| [输入参数]()    | [参数类型]()            | [参数说明]()   | [必填]() |
+| --------------- | ----------------------- | -------------- | -------- |
+| index           | `String`                | 索引名称       | 必填     |
+| type            | `String`                | 文档类型       | 必填     |
+|                 |                         |                |          |
+| searchFields    | `List<EsSeachFieldDto>` | 查询的字段范围 | 非必填   |
+| extend_field... | 待定                    | 扩展字段       | 非必填   |
+
+| [输出参数]() | [属性值]() | [属性类型]() | [输出说明]()                     |
+| ------------ | ---------- | ------------ | -------------------------------- |
+| `Response`   | code       | `String`     | 返回码，0：请求成功；1：请求失败 |
+|              | msg        | `String`     | 返回码错误原因                   |
+|              | data       | `json`       | 返回结果`docs`                   |
+
+### 4.3.3 联想词搜索
+
+
+> [功能概述]()
+>
+> - 根据`ElasticSearch` 中文分词和自定义词典来有效匹配美居业务突出展示的联想词
+
+|   [接口]()   | 搜索词联想查询                                     |
+| :----------: | -------------------------------------------------- |
+| [请求地址]() | `http://{domain}/{contextpath}/search/wordsuggest` |
+| [请求方式]() | `POST`                                             |
+|   [Tag]()    | v1.0.0                                             |
+| [接口分类]() | 公共                                               |
+| [是否分页]() | 否                                                 |
+
+| [输入参数]()    | [参数类型]()            | [参数说明]()       | [必填]() |
+| --------------- | ----------------------- | ------------------ | -------- |
+| index           | `String`                | 索引名称           | 必填     |
+| searchFields    | `List<EsSeachFieldDto>` | 模糊查询的字段范围 | 非必填   |
+| extend_field... | 待定                    | 扩展字段           | 非必填   |
+
+| [输出参数]() | [属性值]() | [属性类型]() | [输出说明]()                     |
+| ------------ | ---------- | ------------ | -------------------------------- |
+| `Response`   | code       | `String`     | 返回码，0：请求成功；1：请求失败 |
+|              | msg        | `String`     | 返回码错误原因                   |
+|              | data       | `json`       | 返回结果`docs`                   |
+
+> [返回数据格式参考]()
+
+![image-20201019203907191](E:\工作日报\工作总结\resources\IOT\image-20201019203907191.png)
+
+# 5. 其他事项
+
+>  [**参数具体内容请以实际项目关联的DTO参数说明为准**]()
+
+## 5.1 附:签名工具类
+
+> 签名工具类-`JAVA`版
+>
+> 为确保请求消息的完整性，防止消息在途中被第三方修改。在请求的参数中增加一个sign参数作为信息摘要值。服务器端与手机端用相同的规则生成sign值，服务器端接收到请求后对比sign值是否正确，如果正确才处理请求，否则视为非法请求。
+>
+> [传送门](http://confluence.msmart.com/pages/viewpage.action?pageId=50954306)
+
+```java
+import org.apache.commons.codec.binary.Base64;
+import org.apache.commons.codec.digest.HmacUtils;
+import org.apache.commons.lang3.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.net.URLDecoder;
+
+/**
+ * @Description: 签名摘要工具类
+ * @Author: musilin
+ * @Date: 2019-4-18
+ * @Version: 1.0.0
+ */
+public class SignatureUtil {
+
+    private static Logger LOGGER = LoggerFactory.getLogger(SignatureUtil.class);
+
+
+ /**
+ * 获取消息认证码
+ *
+ * @param clientSecret 密钥
+ * @param requestMethod 请求方法
+ * @param requestURI 请求URI
+ * @param queryString url中的查询参数
+ * @param bodyBytes 消息体
+ * @Date: 2019-4-18
+ * @Version: 1.0.0
+ * @return
+ */
+
+ public static String getSignature(final String clientSecret, final String requestMethod, final String requestURI, final String queryString, final byte[] bodyBytes) {
+ try {
+ String queryStringAfterDeal = StringUtils.isBlank(queryString) ? "" : URLDecoder.decode(queryString, "utf-8");
+ String payload = (bodyBytes != null && bodyBytes.length > 0) ? new String(bodyBytes, "utf-8") : "";
+ StringBuilder valueToDigest = new StringBuilder();
+ valueToDigest.append(requestMethod).append(requestURI).append(queryStringAfterDeal).append(payload);
+ return createSignature(clientSecret, valueToDigest.toString());
+ } catch (Exception e) {
+   LOGGER.error("createSignature error : {}", e);
+ }
+        return null;
+ }
+
+/**
+ * 生成消息认证码
+ *
+ * @param clientSecret 密钥
+ * @param valueToDigest 待签名字段
+ * @Date: 2019-4-18
+ * @Version: 1.0.0
+ * @return
+ */
+ public static String createSignature(final String clientSecret, final String valueToDigest) {
+ LOGGER.info("strValue to digest : {};clientSecret:{}", valueToDigest, clientSecret);
+ final byte[] digest = HmacUtils.hmacSha256(clientSecret, valueToDigest);
+ return Base64.encodeBase64String(digest);
+ }
+
+public static void main(String[] args) {
+ try {
+ String clientSecret = "o8dk8vm6cbuyxdrl4se4c6i3h4tdea9b";
+ String method = "POST";
+ String requestURI = "/v1/open/device/list/get";
+ String queryString = "client_id=f6f1ec55481b5dc314bd6555e4d3d3bb&timestamp=1556193552988";
+ byte[] bodyBytes = "reqId:fe8234bf-e94c-4cdf-8ea9-c3112962ab01".getBytes("utf-8");
+ String signature = SignatureUtil.getSignature(clientSecret, method, requestURI, queryString, bodyBytes);
+ System.out.println(signature);//输出结果:v+YGWmfylFSF9rhSPSYJAzo8IY+NZxhOdAhs9ii7Aig=
+ } catch (Exception e) {
+
+        }
+    }
+
+
+}
+```
+
+## 5.2 [返回目录](#1. 说明文档)
+
